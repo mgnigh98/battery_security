@@ -1,0 +1,26 @@
+Security,Safety,CouplingLevel,Severity(1-5),L_Takeoff,L_Cruise,L_Landing,Detectability(1-5),mK,L_phase_weighted,fD,Risk
+Hardware Exploits,Systemic Risk,H,5,4.0,3.0,4.0,1,1.9,3.7,1.0,127.38002589135499
+Spoofing,Systemic Risk,H,5,3.0,3.0,5.0,1,1.9,3.6,1.0,123.93732248888594
+Unauthorized Access,Electrical Risk,H,5,4.0,3.0,4.0,2,1.9,3.7,0.8,101.904020713084
+Hardware Exploits,Thermal Risk,H,5,5.0,3.0,2.0,2,1.9,3.5,0.8,96.39569526913351
+Data Manipulation,Electrical Risk,H,5,4.0,4.0,4.0,3,1.9,4.0,0.6,82.62488165925728
+Spoofing,Electrical Risk,M,5,4.0,3.0,4.0,2,1.4,3.7,0.8,75.08717315700926
+Spoofing,Thermal Risk,H,4,4.0,3.0,3.0,2,1.9,3.4,0.8,62.6657857258059
+Hardware Exploits,Mechanical Risk,H,4,3.0,2.0,4.0,2,1.9,3.0,0.8,55.29334034629933
+Unauthorized Access,Mechanical Risk,H,4,2.0,2.0,5.0,2,1.9,2.9,0.8,53.450229001422684
+Sensor Tampering,Electrical Risk,H,4,5.0,3.0,3.0,3,1.9,3.8,0.6,52.52867332898436
+Data Manipulation,Thermal Risk,H,4,4.0,4.0,3.0,3,1.9,3.6999999999999997,0.6,51.14633982032687
+Sensor Tampering,Systemic Risk,M,4,4.0,3.0,4.0,2,1.4,3.7,0.8,50.249035612952724
+Sensor Tampering,Materials Risk,H,5,3.0,3.0,2.0,4,1.9,2.7,0.4,37.18119674666578
+Unauthorized Access,Systemic Risk,M,3,3.0,3.0,5.0,1,1.4,3.6,1.0,36.41235724144406
+Unauthorized Access,Materials Risk,H,4,2.0,3.0,3.0,3,1.9,2.5999999999999996,0.6,35.940671225094555
+Data Manipulation,Systemic Risk,M,3,3.0,4.0,5.0,2,1.4,3.9000000000000004,0.8,31.557376275918188
+Hardware Exploits,Electrical Risk,M,3,5.0,3.0,3.0,2,1.4,3.8,0.8,30.748212781663877
+Unauthorized Access,Thermal Risk,M,3,4.0,3.0,3.0,2,1.4,3.4,0.8,27.511558804646622
+Data Manipulation,Materials Risk,H,4,2.0,4.0,3.0,4,1.9,2.9,0.4,26.725114500711342
+Sensor Tampering,Thermal Risk,M,3,5.0,3.0,2.0,3,1.4,3.5,0.6,21.240541724175703
+Data Manipulation,Mechanical Risk,M,3,2.0,3.0,5.0,3,1.4,3.2,0.6,19.4199238621035
+Spoofing,Mechanical Risk,L,2,2.0,2.0,5.0,2,1.0,2.9,0.8,8.078709227388032
+Sensor Tampering,Mechanical Risk,L,2,3.0,2.0,4.0,3,1.0,3.0,0.6,6.267964055732094
+Hardware Exploits,Materials Risk,L,2,3.0,3.0,2.0,3,1.0,2.7,0.6,5.641167650158884
+Spoofing,Materials Risk,L,2,2.0,3.0,3.0,3,1.0,2.5999999999999996,0.6,5.432235514967814
