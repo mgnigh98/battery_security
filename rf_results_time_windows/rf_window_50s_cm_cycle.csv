@@ -1,0 +1,4 @@
+,pred_BAD,pred_GOOD_drone,pred_GOOD_not_drone
+true_BAD,177,0,8
+true_GOOD_drone,0,168,48
+true_GOOD_not_drone,40,18,22
