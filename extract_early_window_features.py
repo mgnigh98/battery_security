@@ -37,11 +37,16 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+import warnings
+warnings.filterwarnings("ignore", message="Workbook contains no default style*")
+
+
 # ---------------- CONFIG (tweak here) ---------------- #
 
 CONFIG: Dict[str, any] = {
     # Early windows in seconds:
-    "WINDOWS_SEC": [5.0, 10.0, 20.0, 30.0, 50.0, 60.0],
+    "WINDOWS_SEC": [1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 50.0, 60.0],
+
 
     # Thresholds:
     "IR_PROXY_DRONE_MAX": 0.442,      # for early_IR_flag
@@ -215,8 +220,19 @@ def extract_early_features_for_cycle(
         V_sag = V0 - V_min
         V_sag_ratio = V_sag / V0 if V0 != 0 else np.nan
 
-        dvdt_mean = float(np.nanmean(dvdt))
-        dvdt_std = float(np.nanstd(dvdt))
+        # dvdt_mean = float(np.nanmean(dvdt))
+        # dvdt_std = float(np.nanstd(dvdt))
+        # dv/dt stats (avoid warnings when window has <2 valid points)
+        dvdt_valid = dvdt[~np.isnan(dvdt)]
+        if dvdt_valid.size == 0:
+            dvdt_mean = np.nan
+            dvdt_std = np.nan
+        elif dvdt_valid.size == 1:
+            dvdt_mean = float(dvdt_valid[0])
+            dvdt_std = 0.0
+        else:
+            dvdt_mean = float(dvdt_valid.mean())
+            dvdt_std = float(dvdt_valid.std())
 
         I_mean = float(np.nanmean(i))
         I_std = float(np.nanstd(i))
