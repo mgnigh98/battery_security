@@ -1,9 +1,0 @@
-metric,mean,median
-charge_V_end,4.299929762,4.3001
-take_off_V_end,2.802956983,2.7918
-hover_V_end,3.235947973,3.364
-cruise_V_end,2.929588232,2.7996
-landing_V_end,2.375114716,2.4364
-standby_V_end,2.764239891,2.7907
-standby_t_end_h,0.193641886,0
-landing_V_rel_global,-1.924815046,-1.864
