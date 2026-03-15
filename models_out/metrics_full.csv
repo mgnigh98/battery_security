@@ -1,4 +1,0 @@
-model,feature_set,accuracy,macro_f1
-RandomForest,full,0.998404205,0.980463897
-XGBoost,full,0.999436778,0.990704102
-MLP,full,0.997840984,0.975782957

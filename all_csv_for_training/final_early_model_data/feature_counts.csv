@@ -1,0 +1,5 @@
+window_sec,rows,n_features,output_csv,feature_list_txt
+2,1618,97,all_csv_for_training/final_early_model_data/final_early_2s.csv,all_csv_for_training/final_early_model_data/feature_list_2s.txt
+10,1618,131,all_csv_for_training/final_early_model_data/final_early_10s.csv,all_csv_for_training/final_early_model_data/feature_list_10s.txt
+30,1618,165,all_csv_for_training/final_early_model_data/final_early_30s.csv,all_csv_for_training/final_early_model_data/feature_list_30s.txt
+60,1618,199,all_csv_for_training/final_early_model_data/final_early_60s.csv,all_csv_for_training/final_early_model_data/feature_list_60s.txt
