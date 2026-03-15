@@ -13,11 +13,18 @@ __pycache__/
 # Cache folders
 cache/
 
+
 # Results and generated outputs
+data/
+drone_labels_out/
 results/
 results_*/
 plots_out/
 Figures/
+stats_advanced/
+models_out/
+models_out_balanced/
+out_early_features/
 
 # Temporary outputs
 *.png
@@ -32,13 +39,16 @@ all_csv_for_training/combined_feature_windows/
 all_csv_for_training/cycle_history_features.csv
 all_csv_for_training/final_feature_windows/
 
-# Raw data (large)
-data/
-drone_labels_out/
 
 Scripts/plot_battery_pca.py
 Scripts/plot_cycle_level_results.py
 dignostic_skewdata.py
+plot_early_windows.py
+train_models_3class.py
+training_data_plots_line_v1.py
+
+labels.csv
+labels.xlsx
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
