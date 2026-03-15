@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import json
 from pathlib import Path
 
@@ -21,6 +22,49 @@ from xgboost import XGBClassifier
 GROUP_COL = "file"
 LABEL_COL = "cycle_label_3name"
 META_COLS = ["file", "Cycle", "Label", "cycle_label_3class", "cycle_label_3name"]
+
+def feature_cols_for_window(df: pd.DataFrame, window_sec: int) -> list[str]:
+    """
+    Use only:
+    - cumulative early features up to current window
+    - growth features whose end window <= current window
+    Drop noisy binary flags / missing indicators.
+    """
+    allowed = [w for w in [1, 2, 5, 10, 20, 30, 50, 60] if w <= window_sec]
+    cols = []
+
+    # cumulative early blocks
+    for w in allowed:
+        prefix = f"early{w}_"
+        cols.extend([c for c in df.columns if c.startswith(prefix)])
+
+    # only growth features valid up to this window
+    growth_cols = []
+    for c in df.columns:
+        if "_growth_" not in c:
+            continue
+        m = re.search(r"_growth_(\d+)_to_(\d+)$", c)
+        if m:
+            w2 = int(m.group(2))
+            if w2 <= window_sec:
+                growth_cols.append(c)
+
+    cols.extend(growth_cols)
+
+    # drop noisy flags / missing indicators
+    drop_patterns = [
+        "_missing",
+        "_voltage_collapse_flag",
+        "_IR_high_flag",
+        "_dvdt_fluct_flag",
+    ]
+
+    cols = [
+        c for c in sorted(set(cols))
+        if not any(p in c for p in drop_patterns)
+    ]
+
+    return cols
 
 
 def infer_window_from_name(path: Path) -> int:
@@ -95,18 +139,34 @@ def build_model(model_name: str, random_state: int):
 
     if model_name == "XGB":
         return XGBClassifier(
-            n_estimators=600,
-            max_depth=6,
-            learning_rate=0.05,
+            n_estimators=800,
+            max_depth=5,
+            learning_rate=0.04,
             subsample=0.8,
-            colsample_bytree=0.8,
-            min_child_weight=3,
+            colsample_bytree=0.7,
+            min_child_weight=4,
             reg_lambda=2.0,
+            gamma=0.1,
             objective="multi:softprob",
             eval_metric="mlogloss",
             random_state=random_state,
             n_jobs=-1,
         )
+
+    # if model_name == "XGB":
+    #     return XGBClassifier(
+    #         n_estimators=800,
+    #         max_depth=5,
+    #         learning_rate=0.04,
+    #         subsample=0.8,
+    #         colsample_bytree=0.7,
+    #         min_child_weight=4,
+    #         reg_lambda=2.0,
+    #         objective="multi:softprob",
+    #         eval_metric="mlogloss",
+    #         random_state=random_state,
+    #         n_jobs=-1,
+    #     )
 
     if model_name == "MLP":
         return MLPClassifier(
@@ -159,13 +219,14 @@ def main():
 
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
-    dataset_paths = sorted(args.data_dir.glob("final_early_*s.csv"))
+    dataset_paths = sorted(args.data_dir.glob("final_early_*s.csv"), key=infer_window_from_name)
     if not dataset_paths:
         raise FileNotFoundError(f"No final datasets found in {args.data_dir}")
 
     # Fixed split based on largest window for fair comparison
     ref_path = max(dataset_paths, key=infer_window_from_name)
     ref_df = load_dataset(ref_path)
+    ref_df = ref_df.sort_values(["file", "Cycle"]).reset_index(drop=True)
 
     groups = ref_df[GROUP_COL].astype(str).values
     y_ref = ref_df[LABEL_COL].astype(str).values
@@ -175,6 +236,10 @@ def main():
 
     train_files = sorted(ref_df.iloc[train_idx][GROUP_COL].astype(str).unique())
     test_files = sorted(ref_df.iloc[test_idx][GROUP_COL].astype(str).unique())
+
+    # Save split for reproducibility
+    pd.DataFrame({"file": list(train_files)}).to_csv(args.results_dir / "train_files.csv", index=False)
+    pd.DataFrame({"file": list(test_files)}).to_csv(args.results_dir / "test_files.csv", index=False)
 
     with open(args.results_dir / "split_info.json", "w") as f:
         json.dump(
@@ -199,8 +264,10 @@ def main():
     for path in dataset_paths:
         window_sec = infer_window_from_name(path)
         df = load_dataset(path)
+        df = df.sort_values(["file", "Cycle"]).reset_index(drop=True)
 
-        feature_cols = get_feature_columns(df)
+        # feature_cols = get_feature_columns(df)
+        feature_cols = feature_cols_for_window(df, window_sec)
         feature_rows.append({
             "window_sec": window_sec,
             "rows": len(df),
@@ -208,6 +275,8 @@ def main():
             "files": df[GROUP_COL].nunique(),
             "input_csv": str(path),
         })
+
+        print(f"Using {len(feature_cols)} features for {window_sec}s")
 
         train_df = df[df[GROUP_COL].astype(str).isin(train_files)].reset_index(drop=True)
         test_df = df[df[GROUP_COL].astype(str).isin(test_files)].reset_index(drop=True)
@@ -233,6 +302,20 @@ def main():
             X_train_arr, X_test_arr = maybe_scale(model_name, X_train, X_test)
 
             model.fit(X_train_arr, y_train)
+
+            # Save feature importance for XGB
+            if model_name == "XGB":
+                importance = model.feature_importances_
+
+                imp_df = pd.DataFrame({
+                    "feature": feature_cols,
+                    "importance": importance
+                }).sort_values("importance", ascending=False)
+
+                imp_df.to_csv(
+                    args.results_dir / f"feature_importance_{window_sec}s.csv",
+                    index=False
+                )
             y_pred = model.predict(X_test_arr)
 
             acc = accuracy_score(y_test, y_pred)

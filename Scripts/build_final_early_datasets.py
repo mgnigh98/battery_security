@@ -148,6 +148,7 @@ def main():
         # Build final dataset for this window
         keep_cols = [c for c in META_COLS if c in df.columns] + feat_cols
         out_df = df[keep_cols].copy()
+        out_df = out_df.sort_values(["file", "Cycle"]).reset_index(drop=True)
 
         out_csv = args.out_dir / f"final_early_{w}s.csv"
         out_df.to_csv(out_csv, index=False)
