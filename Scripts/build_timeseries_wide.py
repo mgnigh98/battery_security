@@ -13,9 +13,8 @@ Uses:
 - raw Excel files from data/
 
 Current alignment:
-- take_off + hover + cruise only
+- take_off + hover + cruise 
 
-Author intent:
 - one row per cycle
 - no datapoint-level repeated rows
 - same cycle cohort across all windows if keep_only_full_window is enabled
