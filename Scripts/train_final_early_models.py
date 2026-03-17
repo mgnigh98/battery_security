@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+
 import re
 import json
 from pathlib import Path
@@ -20,6 +21,7 @@ from xgboost import XGBClassifier
 
 #added by M. Nigh
 import time
+from datetime import timedelta
 try:
     from tim_utils.kde import KernelDensity
     from tim_utils.syn_data import alpha_beta_prec_recall
@@ -230,7 +232,7 @@ def train_syn(X_train, y_train, inner=0, outer=1, syn_multiply_factor=2, eval_sy
         # print(bws)
         kde = KernelDensity(bandwidth=bws, kernel="epanechnikov")  
         kde.fit(scaler.fit_transform(X_train_i))
-        X_train_syn = scaler.inverse_transform(kde.sample(syn_multiply_factor*len(X_train[y_train==i]), random_state=42))
+        X_train_syn = scaler.inverse_transform(kde.sample(int(syn_multiply_factor*len(X_train[y_train==i])), random_state=42))
         X_train = np.concatenate([X_train, X_train_syn], axis=0)
         y_train = np.concatenate([y_train, [i]*len(X_train_syn)])
 
@@ -247,7 +249,7 @@ def train_syn(X_train, y_train, inner=0, outer=1, syn_multiply_factor=2, eval_sy
     return X_train, y_train, eval_scores
 
 
-def optuna_optimize_syn(X, y, groups, model=None):
+def optuna_optimize_syn(X, y, groups, model=None, multiply_factor=2):
     gss = GroupShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
     train_idx, test_idx = next(gss.split(X, y, groups=groups))
     X_train = X[train_idx]
@@ -259,7 +261,11 @@ def optuna_optimize_syn(X, y, groups, model=None):
     def objective(trial):
         inner = trial.suggest_float("inner", 0, .5, step=0.01)
         outer = trial.suggest_float("outer", .75, 1, step=0.01)
-        X_train_syn, y_train_syn, _ = train_syn(X_train, y_train, inner, outer, 2, eval_syn=False)
+        if multiply_factor is None:
+            mf = trial.suggest_float("multiply_factor", 1.5, 5, step=.1)
+        else:
+            mf = multiply_factor
+        X_train_syn, y_train_syn, _ = train_syn(X_train, y_train, inner, outer, mf, eval_syn=False)
         nonlocal model
         if model is None:
             model = SVC(kernel="rbf", gamma="scale")
@@ -273,9 +279,14 @@ def optuna_optimize_syn(X, y, groups, model=None):
     study.optimize(objective, n_trials=100)
     inner = study.best_params["inner"]
     outer = study.best_params["outer"]
-    return inner, outer
+    if multiply_factor is None:
+        mf = study.best_params["multiply_factor"]
+    else:
+        mf = multiply_factor
+    return inner, outer, mf
 
 def main():
+    tic = time.time()
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--data_dir",
@@ -451,8 +462,9 @@ def main():
             #added by M. Nigh
             if syn_args.use_syn:
                 if syn_args.optimize_syn:
-                    syn_args.inner, syn_args.outer = optuna_optimize_syn(X_train_arr, y_train, groups[train_idx], model=[None, model][1])
-                    # print(f"Optimized inner: {inner}, outer: {outer}")
+                    syn_args.inner, syn_args.outer, syn_args.multiply_factor = optuna_optimize_syn(X_train_arr, y_train, groups[train_idx], 
+                                                                        model=[None, model][1], multiply_factor=None)
+                    print(f"Optimized inner: {syn_args.inner}, outer: {syn_args.outer}, multiply_factor: {syn_args.multiply_factor}")
                 X_train_, y_train_, scores = train_syn(X_train_arr, y_train, **syn_args.__dict__)
                 model.fit(X_train_, y_train_)
                 y_pred_syn = model.predict(X_test)
@@ -499,6 +511,7 @@ def main():
     print(f"\nSaved metrics to: {args.results_dir / 'metrics_summary.csv'}")
     print(f"Saved feature counts to: {args.results_dir / 'feature_counts.csv'}")
     print(f"Saved plots to: {args.results_dir}")
+    print(f"Completed training and evaluation in {timedelta(seconds=time.time()-tic)}")
 
 
 if __name__ == "__main__":
