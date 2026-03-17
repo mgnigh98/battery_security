@@ -121,21 +121,20 @@ def save_confusion_matrix(cm: np.ndarray, class_names: list[str], out_csv: Path,
 
 
 def plot_metric_lines(summary_df: pd.DataFrame, out_dir: Path, syn=False) -> None:
-    if syn:
-        metric_list = ["accuracy", "macro_f1", "accuracy_syn", "macro_f1_syn"]
-    else:
-        metric_list = ["accuracy", "macro_f1"]
-    
-    for metric in metric_list:
+    for metric in ["accuracy", "macro_f1"]:
         plt.figure(figsize=(7, 5))
-        for model_name in sorted(summary_df["model"].unique()):
+        cmap = plt.get_cmap("tab10")
+        for i, model_name in enumerate(sorted(summary_df["model"].unique())):
             sub = summary_df[summary_df["model"] == model_name].sort_values("window_sec")
-            plt.plot(sub["window_sec"], sub[metric], marker="o", label=model_name)
+            plt.plot(sub["window_sec"], sub[metric], marker="o", label=model_name, color=cmap(i), alpha=0.9)
+            if syn:
+                plt.plot(sub["window_sec"], sub[f"{metric}_syn"], marker="*", label=f"{model_name}_syn", color=cmap(i), alpha=0.5)
 
         plt.xlabel("Time window (s)")
         plt.ylabel(metric.replace("_", " ").title())
         plt.title(f"{metric.replace('_', ' ').title()} vs Time Window")
         plt.xticks(sorted(summary_df["window_sec"].unique()))
+        plt.ylim([.75, .95])
         plt.legend()
         plt.tight_layout()
         plt.savefig(out_dir / f"lineplot_{metric}.png", dpi=200, bbox_inches="tight")
@@ -259,7 +258,7 @@ def optuna_optimize_syn(X, y, groups, model=None):
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     def objective(trial):
         inner = trial.suggest_float("inner", 0, .5, step=0.01)
-        outer = trial.suggest_float("outer", .9, 1, step=0.01)
+        outer = trial.suggest_float("outer", .75, 1, step=0.01)
         X_train_syn, y_train_syn, _ = train_syn(X_train, y_train, inner, outer, 2, eval_syn=False)
         nonlocal model
         if model is None:
@@ -298,7 +297,7 @@ def main():
     )
     ap.add_argument("--test_size", type=float, default=0.30)
     ap.add_argument("--random_state", type=int, default=42)
-    args = ap.parse_args()
+    args, remaining = ap.parse_known_args()
 
     #added by M. Nigh
     syn_ap = argparse.ArgumentParser()
@@ -309,7 +308,7 @@ def main():
     syn_ap.add_argument("--outer", default=1, type=float)
     syn_ap.add_argument("--optimize_syn", default=False, action="store_true")
     syn_ap.add_argument("--eval_syn", default=False, action="store_true")
-    syn_args = syn_ap.parse_args()
+    syn_args = syn_ap.parse_args(remaining)
     
 
     if not HAS_SYN and syn_args.use_syn:
@@ -431,18 +430,6 @@ def main():
             )
             cm = confusion_matrix(y_test, y_pred, labels=np.arange(len(class_names)))
 
-            #added by M. Nigh
-            if syn_args.use_syn:
-                if syn_args.optimize_syn:
-                    syn_args.inner, syn_args.outer = optuna_optimize_syn(X_train, y_train, groups, model=None)
-                    # print(f"Optimized inner: {inner}, outer: {outer}")
-                X_train, y_train, scores = train_syn(X_train, y_train, **syn_args.__dict__)
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
-                acc_syn = accuracy_score(y_test, y_pred)
-                f1_syn = f1_score(y_test, y_pred, average="macro")
-                # syn_report = classification_report(y_test, y_pred, target_names=class_names, output_dict=True, zero_division=0)
-
             model_dir = args.results_dir / model_name
             model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -451,13 +438,27 @@ def main():
             pred_df["y_pred"] = le.inverse_transform(y_pred)
             pred_df.to_csv(model_dir / f"predictions_{window_sec}s.csv", index=False)
 
-            save_confusion_matrix(
-                cm=cm,
-                class_names=class_names,
-                out_csv=model_dir / f"confusion_matrix_{window_sec}s.csv",
-                out_png=model_dir / f"confusion_matrix_{window_sec}s.png",
-                title=f"{model_name} - {window_sec}s",
-            )
+            if False:
+                save_confusion_matrix(
+                    cm=cm,
+                    class_names=class_names,
+                    out_csv=model_dir / f"confusion_matrix_{window_sec}s.csv",
+                    out_png=model_dir / f"confusion_matrix_{window_sec}s.png",
+                    title=f"{model_name} - {window_sec}s",
+                )
+
+
+            #added by M. Nigh
+            if syn_args.use_syn:
+                if syn_args.optimize_syn:
+                    syn_args.inner, syn_args.outer = optuna_optimize_syn(X_train_arr, y_train, groups[train_idx], model=[None, model][1])
+                    # print(f"Optimized inner: {inner}, outer: {outer}")
+                X_train_, y_train_, scores = train_syn(X_train_arr, y_train, **syn_args.__dict__)
+                model.fit(X_train_, y_train_)
+                y_pred_syn = model.predict(X_test)
+                acc_syn = accuracy_score(y_test, y_pred_syn)
+                f1_syn = f1_score(y_test, y_pred_syn, average="macro")
+                # syn_report = classification_report(y_test, y_pred, target_names=class_names, output_dict=True, zero_division=0)
 
             row = {
                 "window_sec": window_sec,
