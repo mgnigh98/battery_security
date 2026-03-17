@@ -100,10 +100,10 @@ final_early_60s.csv
 
 | Window | Features |
 | -----: | -------: |
-|     2s |       97 |
-|    10s |      131 |
-|    30s |      165 |
-|    60s |      199 |
+|     1s |       13 |
+|     5s |       53 |
+|    10s |       80 |
+|    60s |      167 |
 
 ## Machine Learning Models
 
