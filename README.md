@@ -127,10 +127,10 @@ This script:
 Typical performance observed:
 | Window | Accuracy | Macro F1 |
 | -----: | -------: | -------: |
-|     2s |    ~0.86 |    ~0.84 |
-|    10s |    ~0.86 |    ~0.85 |
-|    30s |    ~0.87 |    ~0.86 |
-|    60s |    ~0.89 |    ~0.88 |
+|     1s |    ~0.85 |    ~0.84 |
+|     5s |    ~0.85 |    ~0.84 |
+|    10s |    ~0.89 |    ~0.88 |
+|    60s |    ~0.86 |    ~0.85 |
 
 The results demonstrate that useful battery health signals appear within the first few seconds of operation, enabling early anomaly detection.
 
