@@ -18,6 +18,18 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 from xgboost import XGBClassifier
 
+#added by M. Nigh
+import time
+try:
+    from tim_utils.kde import KernelDensity
+    from tim_utils.syn_data import alpha_beta_prec_recall
+    from scipy.integrate import simpson
+    from sklearn.svm import OneClassSVM, SVC
+    import optuna
+    HAS_SYN = True
+except ImportError:
+    HAS_SYN = False
+
 
 GROUP_COL = "file"
 LABEL_COL = "cycle_label_3name"
@@ -105,11 +117,16 @@ def save_confusion_matrix(cm: np.ndarray, class_names: list[str], out_csv: Path,
 
     plt.tight_layout()
     plt.savefig(out_png, dpi=200, bbox_inches="tight")
-    plt.close()
+    plt.close('all')
 
 
-def plot_metric_lines(summary_df: pd.DataFrame, out_dir: Path) -> None:
-    for metric in ["accuracy", "macro_f1"]:
+def plot_metric_lines(summary_df: pd.DataFrame, out_dir: Path, syn=False) -> None:
+    if syn:
+        metric_list = ["accuracy", "macro_f1", "accuracy_syn", "macro_f1_syn"]
+    else:
+        metric_list = ["accuracy", "macro_f1"]
+    
+    for metric in metric_list:
         plt.figure(figsize=(7, 5))
         for model_name in sorted(summary_df["model"].unique()):
             sub = summary_df[summary_df["model"] == model_name].sort_values("window_sec")
@@ -122,7 +139,7 @@ def plot_metric_lines(summary_df: pd.DataFrame, out_dir: Path) -> None:
         plt.legend()
         plt.tight_layout()
         plt.savefig(out_dir / f"lineplot_{metric}.png", dpi=200, bbox_inches="tight")
-        plt.close()
+        plt.close('all')
 
 
 def build_model(model_name: str, random_state: int):
@@ -193,6 +210,72 @@ def maybe_scale(model_name: str, X_train: pd.DataFrame, X_test: pd.DataFrame):
     return X_train.values, X_test.values
 
 
+def train_syn(X_train, y_train, inner=0, outer=1, syn_multiply_factor=2, eval_syn=False, **kwargs):
+    scaler = StandardScaler()
+    alphas, betas, coverages = [], [], []
+    eval_scores = {}
+    for i in np.unique(y_train):
+        # print(i)
+        X_train_i = X_train[y_train==i]
+        if outer-inner < 1:
+            OCC = OneClassSVM(nu=.5, kernel="rbf", gamma="scale")
+            OCC.fit(X_train_i)
+            scores = OCC.score_samples(X_train_i)
+            core = (scores < np.quantile(scores, inner))
+            edge = (scores > np.quantile(scores, outer))
+            band = ~((core)|(edge))
+            X_train_i = X_train_i[band]        
+
+        mask = (pd.DataFrame(X_train_i).nunique()>50).values # (len(X_train_i)//4)
+        bws = ([.25]*len(mask)) * mask
+        # print(bws)
+        kde = KernelDensity(bandwidth=bws, kernel="epanechnikov")  
+        kde.fit(scaler.fit_transform(X_train_i))
+        X_train_syn = scaler.inverse_transform(kde.sample(syn_multiply_factor*len(X_train[y_train==i]), random_state=42))
+        X_train = np.concatenate([X_train, X_train_syn], axis=0)
+        y_train = np.concatenate([y_train, [i]*len(X_train_syn)])
+
+        if eval_syn:
+            ab_dict = alpha_beta_prec_recall.compute_metrics(X_train_i, X_train_syn, steps=10)
+            alphas.append(round(1-2*simpson(abs(ab_dict['alphas'] - ab_dict["alpha_precision"]), ab_dict["alphas"]), 3))
+            betas.append(round(1-2*simpson(abs(ab_dict['alphas'] - ab_dict["beta_recall"]), ab_dict["alphas"]), 3))
+            coverages.append(round(1-2*simpson(abs(ab_dict['alphas'] - ab_dict["beta_coverage"]), ab_dict["alphas"]), 3))
+    if eval_syn:
+        eval_scores["alpha"] = np.mean(alphas)
+        eval_scores["beta"] = np.mean(betas)
+        eval_scores["coverage"] = np.mean(coverages)
+
+    return X_train, y_train, eval_scores
+
+
+def optuna_optimize_syn(X, y, groups, model=None):
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
+    train_idx, test_idx = next(gss.split(X, y, groups=groups))
+    X_train = X[train_idx]
+    y_train = y[train_idx]
+    X_val = X[test_idx]
+    y_val = y[test_idx]
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    def objective(trial):
+        inner = trial.suggest_float("inner", 0, .5, step=0.01)
+        outer = trial.suggest_float("outer", .9, 1, step=0.01)
+        X_train_syn, y_train_syn, _ = train_syn(X_train, y_train, inner, outer, 2, eval_syn=False)
+        nonlocal model
+        if model is None:
+            model = SVC(kernel="rbf", gamma="scale")
+        model.fit(X_train_syn, y_train_syn)
+        y_pred = model.predict(X_val)
+        acc = accuracy_score(y_val, y_pred)
+        f1 = f1_score(y_val, y_pred, average="macro")
+        return acc + f1
+    sampler = optuna.samplers.RandomSampler(seed=42)
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+    study.optimize(objective, n_trials=100)
+    inner = study.best_params["inner"]
+    outer = study.best_params["outer"]
+    return inner, outer
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -216,6 +299,23 @@ def main():
     ap.add_argument("--test_size", type=float, default=0.30)
     ap.add_argument("--random_state", type=int, default=42)
     args = ap.parse_args()
+
+    #added by M. Nigh
+    syn_ap = argparse.ArgumentParser()
+    syn_ap.add_argument("--use_syn", default=True, action="store_true")
+    syn_ap.add_argument("--verbose", default=False, action="store_true")
+    syn_ap.add_argument("--syn_multiply_factor", default=2, type=int)
+    syn_ap.add_argument("--inner", default=0, type=float)
+    syn_ap.add_argument("--outer", default=1, type=float)
+    syn_ap.add_argument("--optimize_syn", default=False, action="store_true")
+    syn_ap.add_argument("--eval_syn", default=False, action="store_true")
+    syn_args = syn_ap.parse_args()
+    
+
+    if not HAS_SYN and syn_args.use_syn:
+        print("[WARN] tim_utils, scipy, or optuna not installed; synthetic data will be skipped.")
+        time.sleep(10) #wait for 10 seconds to read the warning
+        syn_args.use_syn = False
 
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -331,6 +431,18 @@ def main():
             )
             cm = confusion_matrix(y_test, y_pred, labels=np.arange(len(class_names)))
 
+            #added by M. Nigh
+            if syn_args.use_syn:
+                if syn_args.optimize_syn:
+                    syn_args.inner, syn_args.outer = optuna_optimize_syn(X_train, y_train, groups, model=None)
+                    # print(f"Optimized inner: {inner}, outer: {outer}")
+                X_train, y_train, scores = train_syn(X_train, y_train, **syn_args.__dict__)
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                acc_syn = accuracy_score(y_test, y_pred)
+                f1_syn = f1_score(y_test, y_pred, average="macro")
+                # syn_report = classification_report(y_test, y_pred, target_names=class_names, output_dict=True, zero_division=0)
+
             model_dir = args.results_dir / model_name
             model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -365,6 +477,12 @@ def main():
                 row[f"{cls}_recall"] = report.get(cls, {}).get("recall", np.nan)
                 row[f"{cls}_f1"] = report.get(cls, {}).get("f1-score", np.nan)
                 row[f"{cls}_support"] = report.get(cls, {}).get("support", np.nan)
+            
+            if syn_args.use_syn:
+                row["accuracy_syn"] = acc_syn
+                row["macro_f1_syn"] = f1_syn
+                row["accuracy_impr"] = acc_syn-acc
+                row["macro_f1_impr"] = f1_syn-macro_f1
 
             summary_rows.append(row)
 
@@ -375,7 +493,7 @@ def main():
 
     summary_df.to_csv(args.results_dir / "metrics_summary.csv", index=False)
     feature_df.to_csv(args.results_dir / "feature_counts.csv", index=False)
-    plot_metric_lines(summary_df, args.results_dir)
+    plot_metric_lines(summary_df, args.results_dir, syn_args.use_syn)
 
     print(f"\nSaved metrics to: {args.results_dir / 'metrics_summary.csv'}")
     print(f"Saved feature counts to: {args.results_dir / 'feature_counts.csv'}")
