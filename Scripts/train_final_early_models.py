@@ -128,6 +128,7 @@ def plot_metric_lines(summary_df: pd.DataFrame, out_dir: Path, syn=False) -> Non
         cmap = plt.get_cmap("tab10")
         for i, model_name in enumerate(sorted(summary_df["model"].unique())):
             sub = summary_df[summary_df["model"] == model_name].sort_values("window_sec")
+            sub = sub.select_dtypes(include='number').groupby('window_sec', as_index=False).mean()
             plt.plot(sub["window_sec"], sub[metric], marker="o", label=model_name, color=cmap(i), alpha=0.9)
             if syn:
                 plt.plot(sub["window_sec"], sub[f"{metric}_syn"], marker="*", label=f"{model_name}_syn", color=cmap(i), alpha=0.5)
@@ -211,7 +212,7 @@ def maybe_scale(model_name: str, X_train: pd.DataFrame, X_test: pd.DataFrame):
     return X_train.values, X_test.values
 
 
-def train_syn(X_train, y_train, inner=0, outer=1, syn_multiply_factor=2, eval_syn=False, **kwargs):
+def train_syn(X_train, y_train, inner=0, outer=1, syn_multiply_factor=2, eval_syn=False, plot=False, random_state=42, **kwargs):
     scaler = StandardScaler()
     alphas, betas, coverages = [], [], []
     eval_scores = {}
@@ -228,11 +229,21 @@ def train_syn(X_train, y_train, inner=0, outer=1, syn_multiply_factor=2, eval_sy
             X_train_i = X_train_i[band]        
 
         mask = (pd.DataFrame(X_train_i).nunique()>50).values # (len(X_train_i)//4)
-        bws = ([.25]*len(mask)) * mask
+        bws = ([.1]*len(mask)) * mask
         # print(bws)
         kde = KernelDensity(bandwidth=bws, kernel="epanechnikov")  
         kde.fit(scaler.fit_transform(X_train_i))
-        X_train_syn = scaler.inverse_transform(kde.sample(int(syn_multiply_factor*len(X_train[y_train==i])), random_state=42))
+        X_train_syn = scaler.inverse_transform(kde.sample(int(syn_multiply_factor*len(X_train[y_train==i])), random_state=random_state))
+        X_train_syn[np.isclose(X_train_syn, 0, atol=1e-5)] = 0
+        if plot:
+            from sklearn.decomposition import PCA
+            pca = PCA(n_components=3)
+            pca_train = pca.fit_transform(X_train_i)
+            pca_train_syn = pca.transform(X_train_syn)
+            plt.scatter(pca_train[:, 0], pca_train[:, 1], label="real", alpha=0.5)
+            plt.scatter(pca_train_syn[:, 0], pca_train_syn[:, 1], label='syn', alpha=0.5)
+            plt.legend()
+            plt.show()
         X_train = np.concatenate([X_train, X_train_syn], axis=0)
         y_train = np.concatenate([y_train, [i]*len(X_train_syn)])
 
@@ -249,8 +260,8 @@ def train_syn(X_train, y_train, inner=0, outer=1, syn_multiply_factor=2, eval_sy
     return X_train, y_train, eval_scores
 
 
-def optuna_optimize_syn(X, y, groups, model=None, multiply_factor=2):
-    gss = GroupShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
+def optuna_optimize_syn(X, y, groups, model=None, multiply_factor=2, random_state=42):
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.3, random_state=random_state)
     train_idx, test_idx = next(gss.split(X, y, groups=groups))
     X_train = X[train_idx]
     y_train = y[train_idx]
@@ -265,7 +276,7 @@ def optuna_optimize_syn(X, y, groups, model=None, multiply_factor=2):
             mf = trial.suggest_float("multiply_factor", 1.5, 5, step=.1)
         else:
             mf = multiply_factor
-        X_train_syn, y_train_syn, _ = train_syn(X_train, y_train, inner, outer, mf, eval_syn=False)
+        X_train_syn, y_train_syn, _ = train_syn(X_train, y_train, inner, outer, mf, eval_syn=False, random_state=random_state)
         nonlocal model
         if model is None:
             model = SVC(kernel="rbf", gamma="scale")
@@ -285,50 +296,7 @@ def optuna_optimize_syn(X, y, groups, model=None, multiply_factor=2):
         mf = multiply_factor
     return inner, outer, mf
 
-def main():
-    tic = time.time()
-    ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--data_dir",
-        type=Path,
-        default=Path("all_csv_for_training") / "final_early_model_data",
-        help="Directory containing final_early_*s.csv files.",
-    )
-    ap.add_argument(
-        "--results_dir",
-        type=Path,
-        default=Path("results_final_early_models"),
-        help="Directory to save model outputs.",
-    )
-    ap.add_argument(
-        "--models",
-        nargs="+",
-        default=["RF", "XGB", "MLP"],
-        help="Models to train.",
-    )
-    ap.add_argument("--test_size", type=float, default=0.30)
-    ap.add_argument("--random_state", type=int, default=42)
-    args, remaining = ap.parse_known_args()
-
-    #added by M. Nigh
-    syn_ap = argparse.ArgumentParser()
-    syn_ap.add_argument("--use_syn", default=True, action="store_true")
-    syn_ap.add_argument("--verbose", default=False, action="store_true")
-    syn_ap.add_argument("--syn_multiply_factor", default=2, type=int)
-    syn_ap.add_argument("--inner", default=0, type=float)
-    syn_ap.add_argument("--outer", default=1, type=float)
-    syn_ap.add_argument("--optimize_syn", default=False, action="store_true")
-    syn_ap.add_argument("--eval_syn", default=False, action="store_true")
-    syn_args = syn_ap.parse_args(remaining)
-    
-
-    if not HAS_SYN and syn_args.use_syn:
-        print("[WARN] tim_utils, scipy, or optuna not installed; synthetic data will be skipped.")
-        time.sleep(10) #wait for 10 seconds to read the warning
-        syn_args.use_syn = False
-
-    args.results_dir.mkdir(parents=True, exist_ok=True)
-
+def train_models(args, syn_args):
     dataset_paths = sorted(args.data_dir.glob("final_early_*s.csv"), key=infer_window_from_name)
     if not dataset_paths:
         raise FileNotFoundError(f"No final datasets found in {args.data_dir}")
@@ -368,17 +336,18 @@ def main():
     le.fit(ref_df[LABEL_COL].astype(str).values)
     class_names = list(le.classes_)
 
-    summary_rows = []
-    feature_rows = []
+    
 
     for path in dataset_paths:
         window_sec = infer_window_from_name(path)
+        if window_sec != 10:
+            pass
         df = load_dataset(path)
         df = df.sort_values(["file", "Cycle"]).reset_index(drop=True)
 
         # feature_cols = get_feature_columns(df)
         feature_cols = feature_cols_for_window(df, window_sec)
-        feature_rows.append({
+        args.feature_rows.append({
             "window_sec": window_sec,
             "rows": len(df),
             "n_features": len(feature_cols),
@@ -463,9 +432,9 @@ def main():
             if syn_args.use_syn:
                 if syn_args.optimize_syn:
                     syn_args.inner, syn_args.outer, syn_args.multiply_factor = optuna_optimize_syn(X_train_arr, y_train, groups[train_idx], 
-                                                                        model=[None, model][1], multiply_factor=None)
+                                                                        model=[None, model][1], multiply_factor=None, random_state=args.random_state)
                     print(f"Optimized inner: {syn_args.inner}, outer: {syn_args.outer}, multiply_factor: {syn_args.multiply_factor}")
-                X_train_, y_train_, scores = train_syn(X_train_arr, y_train, **syn_args.__dict__)
+                X_train_, y_train_, scores = train_syn(X_train_arr, y_train, random_state=args.random_state, **syn_args.__dict__)
                 model.fit(X_train_, y_train_)
                 y_pred_syn = model.predict(X_test)
                 acc_syn = accuracy_score(y_test, y_pred_syn)
@@ -475,6 +444,7 @@ def main():
             row = {
                 "window_sec": window_sec,
                 "model": model_name,
+                "random_state": args.random_state,
                 "accuracy": acc,
                 "macro_f1": macro_f1,
                 "weighted_f1": weighted_f1,
@@ -497,12 +467,65 @@ def main():
                 row["accuracy_impr"] = acc_syn-acc
                 row["macro_f1_impr"] = f1_syn-macro_f1
 
-            summary_rows.append(row)
+            args.summary_rows.append(row)
 
-            print(f"{model_name} {window_sec}s -> accuracy={acc:.4f}, macro_f1={macro_f1:.4f}")
+            print(f"{model_name} {window_sec}s seed:{args.random_state} -> accuracy={acc:.4f}, macro_f1={macro_f1:.4f}")
 
-    summary_df = pd.DataFrame(summary_rows).sort_values(["model", "window_sec"]).reset_index(drop=True)
-    feature_df = pd.DataFrame(feature_rows).drop_duplicates().sort_values("window_sec").reset_index(drop=True)
+
+
+def main():
+    tic = time.time()
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--data_dir",
+        type=Path,
+        default=Path("all_csv_for_training") / "final_early_model_data",
+        help="Directory containing final_early_*s.csv files.",
+    )
+    ap.add_argument(
+        "--results_dir",
+        type=Path,
+        default=Path("results_final_early_models"),
+        help="Directory to save model outputs.",
+    )
+    ap.add_argument(
+        "--models",
+        nargs="+",
+        default=["RF", "XGB", ], #"MLP"
+        help="Models to train.",
+    )
+    ap.add_argument("--test_size", type=float, default=0.30)
+    ap.add_argument("--random_state", type=int, default=0)
+    ap.add_argument("--n_runs", type=int, default=2)
+    args, remaining = ap.parse_known_args()
+
+    #added by M. Nigh
+    syn_ap = argparse.ArgumentParser()
+    syn_ap.add_argument("--use_syn", default=False, action="store_true")
+    syn_ap.add_argument("--verbose", default=False, action="store_true")
+    syn_ap.add_argument("--syn_multiply_factor", default=2, type=int)
+    syn_ap.add_argument("--inner", default=0, type=float)
+    syn_ap.add_argument("--outer", default=1, type=float)
+    syn_ap.add_argument("--optimize_syn", default=False, action="store_true")
+    syn_ap.add_argument("--eval_syn", default=False, action="store_true")
+    syn_args = syn_ap.parse_args(remaining)
+
+    if not HAS_SYN and syn_args.use_syn:
+        print("[WARN] tim_utils, scipy, or optuna not installed; synthetic data will be skipped.")
+        time.sleep(10) #wait for 10 seconds to read the warning
+        syn_args.use_syn = False
+    
+    args.summary_rows = []
+    args.feature_rows = []
+
+    args.results_dir.mkdir(parents=True, exist_ok=True)
+
+    start_seed = args.random_state
+    for args.random_state in range(start_seed, start_seed+args.n_runs):
+        train_models(args, syn_args)
+
+    summary_df = pd.DataFrame(args.summary_rows).sort_values(["model", "window_sec", 'random_state']).reset_index(drop=True)
+    feature_df = pd.DataFrame(args.feature_rows).drop_duplicates().sort_values("window_sec").reset_index(drop=True)
 
     summary_df.to_csv(args.results_dir / "metrics_summary.csv", index=False)
     feature_df.to_csv(args.results_dir / "feature_counts.csv", index=False)
@@ -516,3 +539,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    import winsound
+    winsound.Beep(500, 500)
